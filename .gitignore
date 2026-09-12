@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.toolchain/
+.pip-tmp/
+build/
+dist/
+*.egg-info/
+fixtures/generated/
+benchmarks/results/
+runs/

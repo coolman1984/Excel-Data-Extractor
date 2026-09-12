@@ -1,0 +1,536 @@
+# .project-eye/graph.yaml — INTENDED architecture, hand-maintained truth.
+# Compared by tools/eye.py against STATIC ACTUAL (AST imports) and RUNTIME ACTUAL
+# (stage sequences in run manifests produced by the test suite).
+# Never generated. Edit deliberately; a change here is an architecture change.
+
+version: 2
+project: xlextract
+status: intended            # intended | partial | implemented
+note: >
+  No code exists yet. Every node below is declared but unimplemented; eye check
+  will report them as such until P1. That is expected, not drift.
+
+# ---------------------------------------------------------------- layers
+layers:
+  - id: contracts
+    packages: [xlextract.contracts]
+    may_import: []
+  - id: core
+    packages: [xlextract.core]
+    may_import: [contracts]
+  - id: adapters
+    packages: [xlextract.adapters]
+    may_import: [contracts, core.structure.ports]
+  - id: sinks
+    packages: [xlextract.sinks]
+    may_import: [contracts, core.publication.ports]
+  - id: diagnostics
+    packages: [xlextract.diagnostics]
+    may_import: [contracts, core.errors]
+  - id: app
+    packages: [xlextract.app]
+    may_import: [contracts, core, adapters, sinks, diagnostics]
+  - id: presentation
+    packages: [xlextract.cli, xlextract.tui]
+    may_import: [contracts, app]
+
+# ---------------------------------------------------------------- domains
+domains:
+  contracts:     {level: 2, purpose: the public versioned data language}
+  source:        {level: 2, purpose: identity, safety, format detection, staging}
+  structure:     {level: 2, purpose: the physical workbook fact model and ports}
+  discovery:     {level: 2, purpose: candidate datasets and header strategies}
+  extraction:    {level: 2, purpose: planning, reading, typing, chunking}
+  evidence:      {level: 2, purpose: ledger, lineage, issues, reconciliation}
+  publication:   {level: 2, purpose: run directory, atomic publish, sinks}
+  orchestration: {level: 2, purpose: run lifecycle, state, cancellation}
+  presentation:  {level: 2, purpose: CLI and TUI rendering}
+  diagnostics:   {level: 2, purpose: environment readiness}
+
+# ---------------------------------------------------------------- nodes
+nodes:
+  - id: contracts
+    level: 3
+    domain: contracts
+    path: src/xlextract/contracts/
+    purpose: define every externally visible model and emit JSON Schema
+    owner_of: [schema_definitions]
+    inputs: []
+    outputs: [ExtractionContract, RunManifest, DatasetSchema, PublicationBatch, Ledger, Issue, Result]
+    depends_on: []
+    external_deps: [pydantic]
+    public_contract: schemas/*.json
+    state: none
+    tests: [tests/contract/]
+    journeys: [J1, J2, J3, J4, J5, J6, J7]
+    task: S-001
+
+  - id: core.source.identity
+    level: 3
+    domain: source
+    path: src/xlextract/core/source/identity.py
+    purpose: resolve a path to a stable SourceRef
+    owner_of: [source_identity]
+    inputs: [path]
+    outputs: [SourceRef]
+    depends_on: [contracts]
+    external_deps: [hashlib]
+    state: owns the source hash; nothing else hashes sources
+    tests: [tests/unit/source/test_identity.py]
+    journeys: [J1, J2, J3, J4, J5, J6, J7]
+    task: S-002
+
+  - id: core.source.safety
+    level: 3
+    domain: source
+    path: src/xlextract/core/source/safety.py
+    purpose: enforce I1 - read-only access, staging policy, mid-run change detection
+    owner_of: [staging_lifecycle]
+    inputs: [SourceRef]
+    outputs: [read-only handle, StagingRef]
+    depends_on: [contracts, core.source.identity]
+    external_deps: []
+    state: owns the staging temp directory
+    tests: [tests/unit/source/test_safety.py, tests/recovery/]
+    journeys: [J1, J2, J3, J4]
+    task: S-002
+
+  - id: core.source.probe
+    level: 3
+    domain: source
+    path: src/xlextract/core/source/probe.py
+    purpose: cheap pre-read size estimate from the zip central directory
+    owner_of: []
+    inputs: [SourceRef]
+    outputs: [SizeEstimate]
+    depends_on: [contracts]
+    external_deps: [zipfile]
+    state: none
+    tests: [tests/unit/source/test_probe.py]
+    journeys: [J1, J2, J3, J4]
+    task: S-002
+
+  - id: core.structure.model
+    level: 3
+    domain: structure
+    path: src/xlextract/core/structure/model.py
+    purpose: format-neutral workbook fact model
+    owner_of: [workbook_facts]
+    inputs: []
+    outputs: [WorkbookFacts, SheetFacts]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/unit/structure/]
+    journeys: [J1, J2, J3, J4]
+    task: S-003
+
+  - id: core.structure.ports
+    level: 3
+    domain: structure
+    path: src/xlextract/core/structure/ports.py
+    purpose: WorkbookInspector, RowReader, CapabilityReport - the adapter boundary
+    owner_of: [adapter_boundary]
+    inputs: []
+    outputs: [protocols]
+    depends_on: [contracts, core.structure.model]
+    external_deps: []
+    state: none
+    tests: [tests/adapter/conformance.py]
+    journeys: [J1, J2, J3, J4]
+    task: S-003
+
+  - id: core.discovery.engine
+    level: 3
+    domain: discovery
+    path: src/xlextract/core/discovery/engine.py
+    purpose: deterministic candidate generation, scoring, header detection, ambiguity
+    owner_of: [interpretive_proposals]
+    inputs: [WorkbookFacts, ExtractionContract]
+    outputs: [Candidate]
+    depends_on: [contracts, core.structure.model]
+    external_deps: []
+    state: none
+    tests: [tests/component/discovery/, tests/golden/discovery/]
+    journeys: [J1, J2]
+    task: S-006
+
+  - id: core.extraction.planner
+    level: 3
+    domain: extraction
+    path: src/xlextract/core/extraction/planner.py
+    purpose: turn facts + contract + candidate + budget into an immutable ExtractionPlan
+    owner_of: [adapter_choice]
+    inputs: [WorkbookFacts, ExtractionContract, Candidate, SizeEstimate]
+    outputs: [ExtractionPlan]
+    depends_on: [contracts, core.structure.model, core.discovery.engine]
+    external_deps: []
+    state: none
+    tests: [tests/unit/extraction/test_planner.py]
+    journeys: [J2, J3, J4]
+    task: S-004
+
+  - id: core.extraction.reader
+    level: 3
+    domain: extraction
+    path: src/xlextract/core/extraction/reader.py
+    purpose: drive a RowReader port in chunks and apply structural policies
+    owner_of: []
+    inputs: [ExtractionPlan, RowReader]
+    outputs: [RawRowBatch]
+    depends_on: [contracts, core.structure.ports, core.evidence.ledger]
+    external_deps: []
+    state: none
+    tests: [tests/component/extraction/]
+    journeys: [J2, J3, J4, J6]
+    task: S-004
+
+  - id: core.extraction.typing
+    level: 3
+    domain: extraction
+    path: src/xlextract/core/extraction/typing.py
+    purpose: the fidelity engine - Excel cell types and number formats to output types
+    owner_of: [output_types]
+    inputs: [RawRowBatch, ExtractionPlan]
+    outputs: [TypedRowBatch, DatasetSchema]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/golden/fidelity/, tests/property/test_typing.py]
+    journeys: [J2, J3, J4]
+    task: S-004
+
+  - id: core.extraction.chunking
+    level: 3
+    domain: extraction
+    path: src/xlextract/core/extraction/chunking.py
+    purpose: chunk sizing and the RSS memory governor
+    owner_of: [chunk_policy]
+    inputs: [ExtractionPlan, runtime RSS]
+    outputs: [chunk boundaries, pressure events]
+    depends_on: [contracts]
+    external_deps: [psutil]
+    state: none
+    tests: [tests/perf/]
+    journeys: [J3]
+    task: S-007
+
+  - id: core.evidence.ledger
+    level: 3
+    domain: evidence
+    path: src/xlextract/core/evidence/ledger.py
+    purpose: enforce I2 - row accounting and the reconciliation identity
+    owner_of: [row_counts]
+    inputs: [row events]
+    outputs: [Ledger]
+    depends_on: [contracts]
+    external_deps: []
+    state: owns all row counts
+    tests: [tests/property/test_ledger.py]
+    journeys: [J2, J3, J4, J6, J7]
+    task: S-004
+
+  - id: core.evidence.lineage
+    level: 3
+    domain: evidence
+    path: src/xlextract/core/evidence/lineage.py
+    purpose: anchor + __src_row + flagged-cell records
+    owner_of: [lineage]
+    inputs: [ExtractionPlan, TypedRowBatch]
+    outputs: [LineageAnchor, FlaggedCell]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/e2e/test_explain.py]
+    journeys: [J2, J3, J7]
+    task: S-004
+
+  - id: core.evidence.issues
+    level: 3
+    domain: evidence
+    path: src/xlextract/core/evidence/issues.py
+    purpose: aggregated warning and error stream with exemplars
+    owner_of: [issues]
+    inputs: [issue events]
+    outputs: [Issue]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/unit/evidence/test_issues.py]
+    journeys: [J2, J3, J4, J5]
+    task: S-004
+
+  - id: core.publication.ports
+    level: 3
+    domain: publication
+    path: src/xlextract/core/publication/ports.py
+    purpose: Sink protocol and publication-only input contracts; separate from Excel-reader ports
+    owner_of: [output_writer_boundary]
+    inputs: []
+    outputs: [Sink]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/unit/sinks/test_conformance.py]
+    journeys: [J2, J3, J4]
+    task: T-005
+
+  - id: core.publication.publisher
+    level: 3
+    domain: publication
+    path: src/xlextract/core/publication/publisher.py
+    purpose: atomic publication of the run directory
+    owner_of: [output_publication]
+    inputs: [datasets, RunManifest]
+    outputs: [run directory]
+    depends_on: [contracts]
+    external_deps: [os]
+    state: owns publication; sole writer of the final run directory
+    tests: [tests/recovery/test_publish.py]
+    journeys: [J2, J3, J4, J5, J6]
+    task: T-005
+
+  - id: core.errors
+    level: 3
+    domain: orchestration
+    path: src/xlextract/core/errors/
+    purpose: error taxonomy, families, exit-code map
+    owner_of: [error_codes]
+    inputs: []
+    outputs: [XlxError]
+    depends_on: [contracts]
+    external_deps: []
+    state: none
+    tests: [tests/unit/errors/]
+    journeys: [J5]
+    task: T-002
+
+  - id: adapters.calamine
+    level: 3
+    domain: structure
+    path: src/xlextract/adapters/calamine_adapter.py
+    purpose: fast reader for all four formats; primary inspector
+    owner_of: []
+    inputs: [SourceRef, ExtractionPlan]
+    outputs: [WorkbookFacts, RawRowBatch]
+    depends_on: [contracts, core.structure.ports]
+    external_deps: [python-calamine]
+    constraint: materializes a sheet; may only be selected inside the memory budget
+    state: none
+    tests: [tests/adapter/test_calamine.py]
+    journeys: [J1, J2]
+    task: S-003
+
+  - id: adapters.openpyxl_stream
+    level: 3
+    domain: structure
+    path: src/xlextract/adapters/openpyxl_adapter.py
+    purpose: bounded-memory streaming for xlsx/xlsm plus structural metadata
+    owner_of: []
+    inputs: [SourceRef, ExtractionPlan]
+    outputs: [WorkbookFacts, RawRowBatch]
+    depends_on: [contracts, core.structure.ports]
+    external_deps: [openpyxl]
+    state: none
+    tests: [tests/adapter/test_openpyxl.py, tests/perf/]
+    journeys: [J3]
+    task: S-007
+
+  - id: adapters.encrypted
+    level: 3
+    domain: source
+    path: src/xlextract/adapters/encrypted_adapter.py
+    purpose: password-protected workbooks decrypted to an in-memory stream
+    owner_of: []
+    inputs: [SourceRef, key]
+    outputs: [in-memory stream]
+    depends_on: [contracts, core.structure.ports]
+    external_deps: [msoffcrypto-tool]
+    state: none
+    tests: [tests/adapter/test_encrypted.py]
+    journeys: [J4]
+    task: S-008
+
+  - id: adapters.excel_com
+    level: 3
+    domain: structure
+    path: src/xlextract/adapters/excel_com/
+    purpose: authorized read through a tool-owned Excel instance; explicit attached mode is read-only to the user's session
+    owner_of: [excel_session]
+    inputs: [SourceRef, ExtractionPlan, session_mode]
+    outputs: [WorkbookFacts, RawRowBatch]
+    depends_on: [contracts, core.structure.ports]
+    external_deps: [pywin32]
+    state: owns the Excel session handle and COM apartment; owned and attached modes have separate safety contracts
+    tests: [tests/real_excel/]
+    journeys: [J4]
+    task: S-009
+    optional: true
+
+  - id: sinks
+    level: 3
+    domain: publication
+    path: src/xlextract/sinks/
+    purpose: parquet, csv, jsonl and preview writers
+    owner_of: [output_bytes]
+    inputs: [PublicationBatch, DatasetSchema]
+    outputs: [data files]
+    depends_on: [contracts, core.publication.ports]
+    external_deps: [pyarrow]
+    state: none
+    tests: [tests/unit/sinks/]
+    journeys: [J2, J3, J4]
+    task: T-005
+
+  - id: app.run
+    level: 3
+    domain: orchestration
+    path: src/xlextract/app/run.py
+    purpose: run lifecycle, state machine, stage timing, cancellation
+    owner_of: [run_state, cancellation]
+    inputs: [service request]
+    outputs: [terminal state, RunManifest]
+    depends_on: [contracts, core]
+    external_deps: []
+    state: sole owner of run state and the cancellation token
+    tests: [tests/component/app/test_state_machine.py]
+    journeys: [J2, J3, J4, J5, J6]
+    task: S-005
+
+  - id: app.services
+    level: 3
+    domain: orchestration
+    path: src/xlextract/app/services/
+    purpose: Inspect, Extract, Verify, Explain, Doctor use-cases
+    owner_of: []
+    inputs: [typed request]
+    outputs: [typed result]
+    depends_on: [contracts, core, app.run, diagnostics]
+    external_deps: []
+    state: none
+    tests: [tests/component/app/, tests/e2e/]
+    journeys: [J1, J2, J3, J4, J5, J6, J7]
+    task: S-005
+
+  - id: app.wiring
+    level: 3
+    domain: orchestration
+    path: src/xlextract/app/wiring.py
+    purpose: composition root - the only place adapters and sinks are constructed
+    owner_of: [configuration]
+    inputs: [config]
+    outputs: [wired services]
+    depends_on: [contracts, core, adapters.calamine, adapters.openpyxl_stream, adapters.encrypted, adapters.excel_com, sinks, diagnostics]
+    external_deps: []
+    state: the only module permitted module-level mutable state
+    tests: [tests/component/app/test_wiring.py]
+    journeys: [J1, J2, J3, J4]
+    task: S-005
+
+  - id: cli
+    level: 3
+    domain: presentation
+    path: src/xlextract/cli/
+    purpose: typer application, human and JSON renderers, exit-code mapping
+    owner_of: []
+    inputs: [argv]
+    outputs: [stdout result, stderr human output, exit code]
+    depends_on: [contracts, app]
+    external_deps: [typer, rich]
+    state: none
+    tests: [tests/cli/]
+    journeys: [J1, J2, J3, J4, J5, J6, J7]
+    task: T-004, T-006, T-008
+
+  - id: tui
+    level: 3
+    domain: presentation
+    path: src/xlextract/tui/
+    purpose: Textual application over the same app services
+    owner_of: []
+    inputs: [keystrokes]
+    outputs: [screens]
+    depends_on: [contracts, app]
+    external_deps: [textual]
+    state: none
+    tests: [tests/tui/]
+    journeys: [J1, J2, J6]
+    task: T-012
+    optional: true
+
+  - id: diagnostics
+    level: 3
+    domain: diagnostics
+    path: src/xlextract/diagnostics/
+    purpose: read-only environment readiness probes
+    owner_of: []
+    inputs: []
+    outputs: [ProbeResult]
+    depends_on: [contracts, core.errors]
+    external_deps: []
+    state: none
+    tests: [tests/cli/test_doctor.py]
+    journeys: []
+    task: T-011
+    optional: true
+
+# ---------------------------------------------------------------- edges
+edges:
+  - {from: cli, to: app.services, kind: calls}
+  - {from: tui, to: app.services, kind: calls}
+  - {from: app.services, to: app.run, kind: calls}
+  - {from: app.services, to: diagnostics, kind: calls}
+  - {from: app.run, to: core.extraction.planner, kind: calls}
+  - {from: app.run, to: core.extraction.reader, kind: calls}
+  - {from: app.run, to: core.extraction.typing, kind: calls}
+  - {from: app.run, to: core.evidence.ledger, kind: calls}
+  - {from: app.run, to: core.publication.publisher, kind: calls}
+  - {from: app.wiring, to: adapters.calamine, kind: constructs}
+  - {from: app.wiring, to: adapters.openpyxl_stream, kind: constructs}
+  - {from: app.wiring, to: adapters.encrypted, kind: constructs}
+  - {from: app.wiring, to: adapters.excel_com, kind: constructs}
+  - {from: app.wiring, to: sinks, kind: constructs}
+  - {from: adapters.calamine, to: core.structure.ports, kind: implements}
+  - {from: adapters.openpyxl_stream, to: core.structure.ports, kind: implements}
+  - {from: adapters.encrypted, to: core.structure.ports, kind: implements}
+  - {from: adapters.excel_com, to: core.structure.ports, kind: implements}
+  - {from: sinks, to: core.publication.ports, kind: implements}
+  - {from: core.extraction.planner, to: core.discovery.engine, kind: consumes}
+  - {from: core.extraction.reader, to: core.evidence.ledger, kind: accrues}
+  - {from: core.source.safety, to: core.source.identity, kind: consumes}
+
+# ---------------------------------------------------------------- journeys
+journeys:
+  - id: J1
+    name: inspect workbook
+    stages: [identity, safety, probe, inspect, discover, result]
+  - id: J2
+    name: extract workbook
+    stages: [identity, safety, probe, inspect, discover, plan, read, type, ledger, write, verify, publish]
+  - id: J3
+    name: extract huge workbook
+    stages: [identity, safety, probe, inspect, plan, read, type, ledger, govern, write, verify, publish]
+  - id: J4
+    name: protected or COM path
+    stages: [identity, safety, classify, acquire_session, read, type, ledger, write, verify, publish, release_session]
+  - id: J5
+    name: failure path
+    stages: [capture_stage, capture_evidence, retain_failed, render_error, exit]
+  - id: J6
+    name: cancel path
+    stages: [signal, finish_chunk, close_ledger, discard_or_retain, terminal]
+  - id: J7
+    name: verify or explain output
+    stages: [read_run_dir, recheck_ledger, rehash_outputs, rehash_source, report]
+
+# ---------------------------------------------------------------- one owner rule (R18)
+owners:
+  run_state:          app.run
+  cancellation:       app.run
+  excel_session:      adapters.excel_com
+  output_publication: core.publication.publisher
+  configuration:      app.wiring
+  source_identity:    core.source.identity
+  row_counts:         core.evidence.ledger
+  adapter_choice:     core.extraction.planner
+  schema_definitions: contracts

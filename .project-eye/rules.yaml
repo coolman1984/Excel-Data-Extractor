@@ -1,0 +1,190 @@
+# .project-eye/rules.yaml — machine-checkable architecture rules.
+# Consumed by: tools/gates.py (ast/grep gates), tools/eye.py (map gates),
+# and translated into .importlinter contracts (import gates).
+# Rationale for every rule lives in ARCHITECTURE.md section 5. Do not restate it here.
+
+version: 2
+
+severity_default: error     # every rule below fails the build unless marked otherwise
+
+# ------------------------------------------------------------------ layering
+layers:
+  # highest first; a layer may import only layers below it
+  - [xlextract.cli, xlextract.tui]
+  - [xlextract.app]
+  - [xlextract.adapters]
+  - [xlextract.sinks]
+  - [xlextract.diagnostics]
+  - [xlextract.core]
+  - [xlextract.contracts]
+
+# ------------------------------------------------------------------ rules
+rules:
+  - id: R1
+    kind: independence
+    description: contracts imports nothing from xlextract
+    checker: import-linter
+    module: xlextract.contracts
+    forbidden_imports: ["xlextract.*"]
+
+  - id: R2
+    kind: forbidden
+    description: core never imports adapters, sinks, app, cli or tui
+    checker: import-linter
+    source: xlextract.core
+    forbidden: [xlextract.adapters, xlextract.sinks, xlextract.app, xlextract.cli, xlextract.tui]
+
+  - id: R3
+    kind: forbidden
+    description: presentation never imports infrastructure or extraction internals
+    checker: import-linter
+    source: [xlextract.cli, xlextract.tui]
+    forbidden: [xlextract.adapters, xlextract.sinks, xlextract.core.extraction]
+
+  - id: R4
+    kind: independence
+    description: cli and tui never import each other
+    checker: import-linter
+    modules: [xlextract.cli, xlextract.tui]
+
+  - id: R5
+    kind: external_confined
+    description: COM bindings live only in the excel_com adapter
+    checker: import-linter+grep
+    externals: [win32com, pythoncom, win32api, win32process, pywintypes]
+    allowed_in: [xlextract.adapters.excel_com]
+
+  - id: R6
+    kind: external_confined
+    description: Excel parsing libraries live only in adapters
+    checker: import-linter
+    externals: [openpyxl, python_calamine, msoffcrypto]
+    allowed_in: [xlextract.adapters]
+
+  - id: R7
+    kind: external_confined
+    description: Arrow/Parquet lives only in sinks
+    checker: import-linter
+    externals: [pyarrow]
+    allowed_in: [xlextract.sinks]
+
+  - id: R8
+    kind: external_confined
+    description: terminal rendering libraries live only in presentation
+    checker: import-linter
+    externals: [rich, textual]
+    allowed_in: [xlextract.cli, xlextract.tui]
+
+  - id: R9
+    kind: ast_forbidden_call
+    description: no print() outside renderers and the TUI
+    checker: gates
+    call: print
+    allowed_in: [xlextract.cli.renderers, xlextract.tui]
+
+  - id: R10
+    kind: ast_no_module_state
+    description: no module-level mutable state outside the composition root
+    checker: gates
+    forbids_module_level: [list, dict, set, bytearray, "class instances"]
+    allowed_in: [xlextract.app.wiring]
+    note: module-level Final scalars, tuples, frozensets and Enums are permitted everywhere
+
+  - id: R11
+    kind: no_cycles
+    description: no import cycles anywhere in src/
+    checker: import-linter
+
+  - id: R12
+    kind: size_limit
+    description: god-module guard
+    checker: gates
+    max_module_loc: 500
+    max_package_modules: 12
+    exempt_if_mapped: true        # a package may exceed 12 if each module is a graph node
+
+  - id: R13
+    kind: unique_definition
+    description: every public contract model is defined in exactly one module
+    checker: gates
+    scope: xlextract.contracts
+    detects: duplicate_schemas
+
+  - id: R14
+    kind: map_coverage
+    description: orphan guard - nodes map to modules, modules map to nodes
+    checker: eye
+    min_module_loc: 50
+    detects: [orphan_components, unmapped_modules]
+
+  - id: R15
+    kind: journey_coverage
+    description: every declared journey is exercised by at least one test
+    checker: eye
+    source: graph.yaml#journeys
+    evidence: run manifests produced by the test suite
+
+  - id: R16
+    kind: external_forbidden
+    description: no networking anywhere in src/
+    checker: import-linter+grep
+    externals: [socket, urllib, urllib3, http, requests, httpx, aiohttp, ftplib, smtplib, telnetlib, webbrowser]
+    allowed_in: []
+    runtime_check: tests/conftest.py::no_network_guard
+
+  - id: R17
+    kind: source_write_guard
+    description: no write-mode open against a source path
+    checker: gates+runtime
+    forbids: ["open(..., mode containing w/a/+) on a SourceRef path", "os.remove", "os.rename", "shutil.move on a source"]
+    runtime_check: tests/conftest.py::source_integrity_guard
+
+  - id: R18
+    kind: single_owner
+    description: One Owner Rule
+    checker: eye
+    source: graph.yaml#owners
+    detects: duplicate_ownership
+
+  - id: R19
+    kind: project_import_allowlist
+    description: adapters may import only contracts and the Excel-reader port
+    checker: gates
+    source: xlextract.adapters
+    allowed_project_imports: [xlextract.contracts, xlextract.core.structure.ports]
+
+  - id: R20
+    kind: project_import_allowlist
+    description: sinks may import only contracts and the publication Sink port
+    checker: gates
+    source: xlextract.sinks
+    allowed_project_imports: [xlextract.contracts, xlextract.core.publication.ports]
+
+  - id: R21
+    kind: project_import_allowlist
+    description: diagnostics may import only contracts and the error taxonomy
+    checker: gates
+    source: xlextract.diagnostics
+    allowed_project_imports: [xlextract.contracts, xlextract.core.errors]
+
+# ------------------------------------------------------------------ drift classes
+drift_detection:
+  views:
+    intended: .project-eye/graph.yaml
+    static_actual: AST import graph of src/
+    runtime_actual: stage and adapter sequences recorded in test-produced run manifests
+  classes:
+    - cycles
+    - god_modules
+    - duplicate_ownership
+    - duplicate_schemas
+    - hidden_global_state
+    - cross_domain_shortcuts
+    - ui_to_persistence_violations
+    - unmapped_runtime_paths
+    - orphan_components
+  on_disagreement: fail          # any meaningful disagreement is architecture drift
+
+# ------------------------------------------------------------------ naming bans
+banned_package_names: [utils, helpers, common, misc, shared, lib]
+banned_reason: shared code belongs to the domain that owns it
